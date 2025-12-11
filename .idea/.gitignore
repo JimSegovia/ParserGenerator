@@ -1,10 +1,10 @@
 # Archivos ignorados por defecto (los que ya tienes)
 /shelf/
 /workspace.xml
+__pycache__/
 
 # === Python ===
 # Ignora la carpeta de bytecode generada automáticamente
-__pycache__/
 
 # Ignora los archivos de bytecode compilado (*.pyc)
 *.pyc
