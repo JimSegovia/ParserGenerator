@@ -25,6 +25,8 @@ The generator includes full support for the following parsing algorithms (Bottom
     - State and canonical collection reports in **PDF**.
 - **Special Symbol Handling**: Native support for empty production symbols (λ / ε).
 
+![Parser Generator Example](https://github.com/JimSegovia/ParserGenerator/blob/main/assets/example.png?raw=true)
+
 ## System Requirements
 
 To run this project, you will need:

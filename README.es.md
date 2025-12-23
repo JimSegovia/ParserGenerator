@@ -25,6 +25,8 @@ El generador incluye soporte completo para los siguientes algoritmos de análisi
     - Reportes de estados y colecciones canónicas en **PDF**.
 - **Manejo de Símbolos Especiales**: Soporte nativo para símbolos de producción vacía (λ / ε).
 
+![Ejemplo del Generador de Parsers](https://github.com/JimSegovia/ParserGenerator/blob/main/assets/example.png?raw=true)
+
 ## Requisitos del Sistema
 
 Para ejecutar este proyecto, necesitarás:
