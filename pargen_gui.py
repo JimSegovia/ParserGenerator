@@ -12,22 +12,12 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QColor
 
-# --- Dynamic Import for "Generador CLR.py" ---
-# Because the filename has spaces, we can't do a normal import.
-spec = importlib.util.spec_from_file_location("generador_clr", "Generador CLR.py")
-generador_clr = importlib.util.module_from_spec(spec)
-sys.modules["generador_clr"] = generador_clr
-spec.loader.exec_module(generador_clr)
-
-# Import generator_lr for LR(0)
-spec_lr = importlib.util.spec_from_file_location("generator_lr", "generator_lr.py")
-generator_lr = importlib.util.module_from_spec(spec_lr)
-sys.modules["generator_lr"] = generator_lr
-spec_lr.loader.exec_module(generator_lr)
-
-# Import primerosysiguientes (dependency of Generador CLR)
-import primerosysiguientes
+# Standard Imports
+import firstandfollows
 import generator_ll
+import generator_lr
+import generator_clr
+import generator_lalr
 
 class GrammarInputPanel(QWidget):
     def __init__(self):
@@ -142,7 +132,7 @@ class ResultsPanel(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Parser Generator - LL/CLR")
+        self.setWindowTitle("Parser Generator")
         self.resize(1300, 850)
 
         main_widget = QWidget()
@@ -164,7 +154,7 @@ class MainWindow(QMainWindow):
         algo_layout = QHBoxLayout()
         algo_layout.addWidget(QLabel("Algorithm:"))
         self.algo_selector = QComboBox()
-        self.algo_selector.addItems(["LL(1)", "LR(0)", "SLR(1)", "LALR(1)", "CLR(1)"])
+        self.algo_selector.addItems(["LL(1)", "LR(0)", "SLR(1)", "CLR(1)", "LALR(1)"])
         self.algo_selector.setCurrentText("LL(1)")
         algo_layout.addWidget(self.algo_selector)
         algo_layout.addStretch()
@@ -227,7 +217,8 @@ class MainWindow(QMainWindow):
         self.results_panel.parse_btn.clicked.connect(self.parse_input_string)
         self.algo_selector.currentTextChanged.connect(self.on_algo_changed) # New Connection
         self.results_panel.tabs.currentChanged.connect(lambda: self.update_export_button_text())
-        self.results_panel.chk_show_lambda.stateChanged.connect(self.refresh_lr0_states)
+        # Connect checkbox
+        self.results_panel.chk_show_lambda.stateChanged.connect(self.refresh_states)
 
         # State storage
         self.current_table = None
@@ -237,6 +228,26 @@ class MainWindow(QMainWindow):
         self.on_algo_changed(self.algo_selector.currentText())
 
     def on_algo_changed(self, algo):
+        # 1. Clear Previous Results
+        self.current_table = None
+        self.current_states = None
+        
+        self.results_panel.table_widget.clear()
+        self.results_panel.table_widget.setRowCount(0)
+        self.results_panel.table_widget.setColumnCount(0)
+        
+        self.results_panel.first_follow_table.clear()
+        self.results_panel.first_follow_table.setRowCount(0)
+        
+        self.results_panel.parse_steps_table.clear()
+        self.results_panel.parse_steps_table.setRowCount(0) # Clear rows
+        
+        self.results_panel.states_text.clear()
+        self.closure_text.clear()
+        self.productions_list.clear()
+        self.results_panel.tree_output.clear()
+        
+        # 2. Configure Visibility and Columns
         if algo == "LL(1)":
              self.intermediate_tabs.setTabVisible(0, False) # Closure Hidden
              self.intermediate_tabs.setTabVisible(1, True) # Rules Visible
@@ -246,31 +257,67 @@ class MainWindow(QMainWindow):
              self.results_panel.tabs.setTabVisible(2, True) # Tree/Steps Visible
              self.results_panel.tabs.setTabVisible(3, False) # States Hidden
              self.results_panel.chk_show_lambda.setVisible(False) # Checkbox Hidden
+             
+             # Setup Steps Table for LL(1)
+             self.results_panel.parse_steps_table.setColumnCount(3)
+             self.results_panel.parse_steps_table.setHorizontalHeaderLabels(["Stack", "Input Buffer", "Action"])
+             self.results_panel.parse_steps_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+
         elif algo == "LR(0)":
-             self.intermediate_tabs.setTabVisible(0, False) # Closure Hidden (using States tab instead)
+             self.intermediate_tabs.setTabVisible(0, False) # Closure Hidden
              self.intermediate_tabs.setTabVisible(1, True) # Rules Visible
              
-             self.results_panel.tabs.setTabVisible(0, False) # Table Hidden
-             self.results_panel.tabs.setTabVisible(1, False) # First/Follow Hidden
-             self.results_panel.tabs.setTabVisible(2, False) # Tree Hidden
+             self.results_panel.tabs.setTabVisible(0, True) # Table Visible
+             self.results_panel.tabs.setTabVisible(1, True) # First/Follow Visible (Requested)
+             self.results_panel.tabs.setTabVisible(2, True) # Parse Tree Visible
              self.results_panel.tabs.setTabVisible(3, True) # States Visible
              self.results_panel.chk_show_lambda.setVisible(True) # Checkbox Visible
-        else: # Other algorithms (CLR, etc.)
-             self.intermediate_tabs.setTabVisible(0, True) # Closure Visible
+
+
+             # Setup Steps Table for LR(0)
+             self.results_panel.parse_steps_table.setColumnCount(4)
+             self.results_panel.parse_steps_table.setHorizontalHeaderLabels(["Stack", "Symbols", "Input", "Action"])
+             self.results_panel.parse_steps_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+
+        elif algo == "SLR(1)":
+             self.intermediate_tabs.setTabVisible(0, False) # Closure Hidden
              self.intermediate_tabs.setTabVisible(1, True) # Rules Visible
              
              self.results_panel.tabs.setTabVisible(0, True) # Table Visible
              self.results_panel.tabs.setTabVisible(1, True) # First/Follow Visible
-             self.results_panel.tabs.setTabVisible(2, False) # Tree Hidden
-             self.results_panel.tabs.setTabVisible(3, False) # States Hidden
-             self.results_panel.chk_show_lambda.setVisible(False) # Checkbox Hidden
+             self.results_panel.tabs.setTabVisible(2, True) # Parse Tree Visible
+             self.results_panel.tabs.setTabVisible(3, True) # States Visible
+             self.results_panel.chk_show_lambda.setVisible(True) # Checkbox Visible
+
+             # Setup Steps Table for SLR(1)
+             self.results_panel.parse_steps_table.setColumnCount(4)
+             self.results_panel.parse_steps_table.setHorizontalHeaderLabels(["Stack", "Symbols", "Input", "Action"])
+             self.results_panel.parse_steps_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+
+
+        else: # Other algorithms (LALR, etc.)
+             self.intermediate_tabs.setTabVisible(0, False) # Closure Hidden (Requested by user)
+             self.intermediate_tabs.setTabVisible(1, True) # Rules Visible
+             
+             self.results_panel.tabs.setTabVisible(0, True) # Table Visible
+             self.results_panel.tabs.setTabVisible(1, True) # First/Follow Visible
+             self.results_panel.tabs.setTabVisible(2, True) # Parse Tree Visible
+             self.results_panel.tabs.setTabVisible(3, True) # States Visible (Requested by user)
+             self.results_panel.chk_show_lambda.setVisible(True) # Checkbox Visible (Requested by user)
+
+             # Setup Steps Table for CLR/LALR
+             self.results_panel.parse_steps_table.setColumnCount(4)
+             self.results_panel.parse_steps_table.setHorizontalHeaderLabels(["Stack", "Symbols", "Input", "Action"])
+             self.results_panel.parse_steps_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         
         # Update Export Button Text
         self.update_export_button_text()
+
              
     def update_export_button_text(self):
-        # If LR(0) and States tab is active
-        if self.algo_selector.currentText() == "LR(0)" and self.results_panel.tabs.currentIndex() == 3:
+        # If any LR-based and States tab is active
+        algo = self.algo_selector.currentText()
+        if algo in ["LR(0)", "SLR(1)", "CLR(1)", "LALR(1)"] and self.results_panel.tabs.currentIndex() == 3:
             self.results_panel.export_csv_button.setText("Export PDF")
         else:
             self.results_panel.export_csv_button.setText("Export CSV")
@@ -286,36 +333,42 @@ class MainWindow(QMainWindow):
             return
 
         # 2. Reset Backend State
-        primerosysiguientes.nt_list.clear()
-        primerosysiguientes.t_list.clear()
-        primerosysiguientes.production_list.clear()
+        firstandfollows.nt_list.clear()
+        firstandfollows.t_list.clear()
+        firstandfollows.production_list.clear()
         # Reset specific module lists if they are separate copies (they seem shared via import)
-        generador_clr.nt_list = []
+        # Reset specific module lists
+        generator_clr.nt_list = []
+        generator_clr.t_list = []
         generator_lr.nt_list = []
-        generator_lr.production_list = []
+        # Stale reference removal: No longer setting generator_lr.production_list as it's shared via firstandfollows
+        
+        # Reset state counters
+        generator_clr.State._id = 0
+        generator_lr.State._id = 0
         
         # 3. Parse Inputs
         # Create Objects for NTs
         nt_symbols = [x.strip() for x in nt_text.split('|') if x.strip()]
         for nt in nt_symbols:
-            primerosysiguientes.nt_list[nt] = primerosysiguientes.NonTerminal(nt)
+            firstandfollows.nt_list[nt] = firstandfollows.NonTerminal(nt)
 
         # Create Objects for Terminals
         t_symbols = [x.strip() for x in t_text.split('|') if x.strip()]
         for t in t_symbols:
-            primerosysiguientes.t_list[t] = primerosysiguientes.Terminal(t)
+            firstandfollows.t_list[t] = firstandfollows.Terminal(t)
 
         # Add Implicit Terminals
         if self.grammar_panel.chk_lambda.isChecked():
-            primerosysiguientes.t_list['λ'] = primerosysiguientes.Terminal('λ')
+            firstandfollows.t_list['λ'] = firstandfollows.Terminal('λ')
         if self.grammar_panel.chk_epsilon.isChecked():
-            primerosysiguientes.t_list['ε'] = primerosysiguientes.Terminal('ε')
+            firstandfollows.t_list['ε'] = firstandfollows.Terminal('ε')
 
         # Parse Productions
 
         # Replace '->' with '→' to ensure compatibility with backend (which splits by '→')
         productions = [line.strip().replace('->', '→') for line in prod_text.split('\n') if line.strip()]
-        primerosysiguientes.production_list = productions # Assign directly to the list
+        firstandfollows.production_list[:] = productions # Update in-place to keep references valid
 
         # 4. Run Logic & Capture Output
         output_capture = io.StringIO()
@@ -326,22 +379,23 @@ class MainWindow(QMainWindow):
             algo = self.algo_selector.currentText()
             
             # --- Common Step: First & Follow ---
-            # We always calculate this as it is useful for all (or most)
-            # Replicates lines 382-391 in Generador CLR.py logic
-            print("--- FIRST & FOLLOW ---\\n")
+            # We calculate this once globally now
+            print("--- PRIMERO & SIGUIENTE ---\\n")
+            
+            # Execute global computation once
+            firstandfollows.compute_all_primeros()
+            firstandfollows.compute_all_siguientes()
+            
             first_follow_data = {}
-            for nt_name, nt_obj in primerosysiguientes.nt_list.items():
-                primerosysiguientes.compute_first(nt_name)
-                primerosysiguientes.compute_follow(nt_name)
-                
+            for nt_name, nt_obj in firstandfollows.nt_list.items():
                 # Store for table display
                 first_follow_data[nt_name] = {
-                    "first": primerosysiguientes.get_first(nt_name),
-                    "follow": primerosysiguientes.get_follow(nt_name)
+                    "first": nt_obj.primero,
+                    "follow": nt_obj.siguiente
                 }
                 
-                print(f"{nt_name}\\n\\tFirst: {first_follow_data[nt_name]['first']}")
-                print(f"\\tFollow: {first_follow_data[nt_name]['follow']}\\n")
+                print(f"{nt_name}\\n\\tPrimero: {first_follow_data[nt_name]['first']}")
+                print(f"\\tSiguiente: {first_follow_data[nt_name]['follow']}\\n")
             
             # Update First & Follow Table
             self.update_first_follow_table(first_follow_data)
@@ -362,7 +416,7 @@ class MainWindow(QMainWindow):
                      display_table[nt] = {}
                      for term, p_idx in row.items():
           
-                         prod = primerosysiguientes.production_list[p_idx]
+                         prod = firstandfollows.production_list[p_idx]
                          _, body = prod.split("→")
                          display_table[nt][term] = body.strip() # Just the body
                  
@@ -372,45 +426,52 @@ class MainWindow(QMainWindow):
 
             elif algo == "CLR(1)":
                 # Step B: Augment Grammar
-                generador_clr.production_list = primerosysiguientes.production_list
-                generador_clr.ntl = primerosysiguientes.nt_list
-                generador_clr.tl = primerosysiguientes.t_list
-                generador_clr.augment_grammar()
+                generator_clr.augment_grammar()
                 
-                # Update lists in generator module
-                generador_clr.nt_list = list(generador_clr.ntl.keys())
-                generador_clr.t_list = list(generador_clr.tl.keys()) + ['$']
-
                 # Step C: Calc States (Canonical Collection)
+                # Ensure nt_list and t_list are populated AFTER augment_grammar
+                generator_clr.nt_list = list(firstandfollows.nt_list.keys())
+                generator_clr.t_list = list(firstandfollows.t_list.keys()) + ['$']
+
                 print("--- CANONICAL COLLECTION (CLOSURE) ---\\n")
-                states = generador_clr.calc_states()
+                states = generator_clr.calc_states()
                 self.current_states = states
 
-                # Print states for the text view
-                for idx, state in enumerate(states):
-                    print(f"State {idx}:")
-                    generador_clr.pretty_print_items(state) # Prints to captured stdout
-                    print("")
+                # Populate States Tab (Clean output, no First/Follow mix)
+                self.refresh_states()
                 
-                self.closure_text.setPlainText(output_capture.getvalue())
+                # Note: Closure tab is hidden for CLR
+                # self.closure_text.setPlainText(output_capture.getvalue())
 
                 # Step D: Make Table
-                table = generador_clr.make_table(states)
+                table = generator_clr.make_table(states)
                 self.current_table = table
+                
+            elif algo == "LALR(1)":
+                # Augmented Grammar logic (Same as CLR/LR0)
+                generator_clr.augment_grammar()
+                
+                generator_clr.nt_list = list(firstandfollows.nt_list.keys())
+                generator_clr.t_list = list(firstandfollows.t_list.keys()) + ['$']
+                
+                print("--- LALR(1) STATES (Merged) ---\\n")
+                states = generator_lalr.calc_states_lalr()
+                self.current_states = states
+                
+                # Format/Output States
+                self.refresh_states()
+                
+                # Make Table
+                table = generator_lalr.make_table_lalr(states)
+                self.current_table = table
+
             elif algo == "LR(0)":
-                # Augmented Grammar logic similar to CLR but using generator_lr
-                generator_lr.production_list = primerosysiguientes.production_list
-                generator_lr.ntl = primerosysiguientes.nt_list
-                generator_lr.tl = primerosysiguientes.t_list
+                # Augmented Grammar logic
                 generator_lr.augment_grammar()
                 
-                # Update visual lists from generator module
-                # Note: generator_lr modifies the lists in place provided references are set correctly
-                # We need to reflect the augmented production list in the GUI
-                
                 # UPDATE: Also populate the flat lists required by calc_states
-                generator_lr.nt_list = list(generator_lr.ntl.keys())
-                generator_lr.t_list = list(generator_lr.tl.keys()) + ['$'] # Add EOF if needed, usually $
+                generator_lr.nt_list = list(firstandfollows.nt_list.keys())
+                generator_lr.t_list = list(firstandfollows.t_list.keys()) + ['$'] # Add EOF if needed, usually $
                 
                 # Step C: Calc States
                 print("--- LR(0) STATES ---\\n")
@@ -418,16 +479,33 @@ class MainWindow(QMainWindow):
                 self.current_states = states
                 
                 # Format output
-                show_lambda = self.results_panel.chk_show_lambda.isChecked()
-                empty_symbol = 'ε' if self.grammar_panel.chk_epsilon.isChecked() else 'λ'
-                formatted_states = generator_lr.format_states_lr0(states, show_lambda=show_lambda, empty_symbol=empty_symbol)
-                self.results_panel.states_text.setPlainText(formatted_states)
+                self.refresh_states()
                 
-                # Update production list to show augmented rule
-                # generator_lr.production_list has the augmented rules now
-                primerosysiguientes.production_list = generator_lr.production_list # Sync back for display
+                # Step D: Make Table
+                table = generator_lr.make_table(states)
+                self.current_table = table
+
+            elif algo == "SLR(1)":
+                # Augmented Grammar logic
+                generator_lr.augment_grammar()
+                
+                # Update visual lists
+                generator_lr.nt_list = list(firstandfollows.nt_list.keys())
+                generator_lr.t_list = list(firstandfollows.t_list.keys()) + ['$']
+                
+                # Step C: Calc States
+                print("--- SLR(1) STATES ---\\n")
+                states = generator_lr.calc_states()
+                self.current_states = states
+                
+                # Format output
+                self.refresh_states()
+                
+                table = generator_lr.make_table_slr(states)
+                self.current_table = table
                 
             else:
+
                  QMessageBox.information(self, "Info", f"Algorithm {algo} not yet fully implemented in GUI.")
                  return
 
@@ -443,7 +521,7 @@ class MainWindow(QMainWindow):
         # 5. Update UI
         # self.first_follow_text.setPlainText(first_follow_str) # Removed text view
         self.update_results_table(self.current_table)
-        self.update_productions_list(primerosysiguientes.production_list)
+        self.update_productions_list(firstandfollows.production_list)
         
         # Adjust tabs visibility based on algo selection (redundant but ensures consistency)
         # self.on_algo_changed(algo) 
@@ -451,9 +529,11 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Success", "Parser Generated Successfully.")
         
     def parse_input_string(self):
-        if self.algo_selector.currentText() != "LL(1)":
-             QMessageBox.warning(self, "Warning", "Parse Tree is currently only for LL(1).")
+        algo = self.algo_selector.currentText()
+        if algo not in ["LL(1)", "LR(0)", "SLR(1)", "CLR(1)", "LALR(1)"]:
+             QMessageBox.warning(self, "Warning", f"Parse Tree is currently not implemented for {algo}.")
              return
+
              
         if not self.current_table:
              QMessageBox.warning(self, "Warning", "Please build the parser first.")
@@ -463,24 +543,50 @@ class MainWindow(QMainWindow):
         if not input_str:
              return
              
-        # We need the ACTUAL table with indices
-        raw_table = generator_ll.compute_ll1_table()
-        start_symbol = list(primerosysiguientes.nt_list.keys())[0]
-        
-        tokens = input_str.split() # Fix: Define tokens
-        result_node, steps = generator_ll.parse_input(raw_table, start_symbol, tokens)
-        
-        if isinstance(result_node, str):
-            # Error in setup or immediate fail (though parse_input returns tuple)
-            # If parse_input returns (str, steps)
-            QMessageBox.warning(self, "Parse Error", result_node)
+        if algo == "LL(1)":
+            # We need the ACTUAL table with indices
+            raw_table = generator_ll.compute_ll1_table()
+            start_symbol = list(firstandfollows.nt_list.keys())[0]
             
-        # Populate Table
-        self.results_panel.parse_steps_table.setRowCount(len(steps))
-        for i, step in enumerate(steps):
-             self.results_panel.parse_steps_table.setItem(i, 0, QTableWidgetItem(step['stack']))
-             self.results_panel.parse_steps_table.setItem(i, 1, QTableWidgetItem(step['input']))
-             self.results_panel.parse_steps_table.setItem(i, 2, QTableWidgetItem(step['action']))
+            tokens = input_str.split() 
+            result_node, steps = generator_ll.parse_input(raw_table, start_symbol, tokens)
+            
+            if isinstance(result_node, str):
+                QMessageBox.warning(self, "Parse Error", result_node)
+                
+            # Configure Table for LL(1) (3 Columns)
+            self.results_panel.parse_steps_table.setColumnCount(3)
+            self.results_panel.parse_steps_table.setHorizontalHeaderLabels(["Stack", "Input Buffer", "Action"])
+            self.results_panel.parse_steps_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+            
+            self.results_panel.parse_steps_table.setRowCount(len(steps))
+            for i, step in enumerate(steps):
+                 self.results_panel.parse_steps_table.setItem(i, 0, QTableWidgetItem(step['stack']))
+                 self.results_panel.parse_steps_table.setItem(i, 1, QTableWidgetItem(step['input']))
+                 self.results_panel.parse_steps_table.setItem(i, 2, QTableWidgetItem(step['action']))
+                 
+        elif algo in ["LR(0)", "SLR(1)", "CLR(1)", "LALR(1)"]:
+            # LR-style Simulation
+            
+            if algo == "CLR(1)":
+                steps = generator_clr.parse(self.current_table, input_str)
+            elif algo == "LALR(1)":
+                 # LALR uses CLR's parse which now handles string IDs
+                 steps = generator_clr.parse(self.current_table, input_str)
+            else:
+                steps = generator_lr.parse(self.current_table, input_str)
+            
+            # Configure Table for LR-style (4 Columns)
+            self.results_panel.parse_steps_table.setColumnCount(4)
+            self.results_panel.parse_steps_table.setHorizontalHeaderLabels(["Stack", "Symbols", "Input", "Action"])
+            self.results_panel.parse_steps_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+            
+            self.results_panel.parse_steps_table.setRowCount(len(steps))
+            for i, step in enumerate(steps):
+                 self.results_panel.parse_steps_table.setItem(i, 0, QTableWidgetItem(step.get('stack', '')))
+                 self.results_panel.parse_steps_table.setItem(i, 1, QTableWidgetItem(step.get('symbols', '')))
+                 self.results_panel.parse_steps_table.setItem(i, 2, QTableWidgetItem(step.get('input', '')))
+                 self.results_panel.parse_steps_table.setItem(i, 3, QTableWidgetItem(step.get('action', '')))
 
     def update_first_follow_table(self, data):
         self.results_panel.first_follow_table.clear()
@@ -489,7 +595,7 @@ class MainWindow(QMainWindow):
             
         columns = ["Non-Terminal", "First", "Follow"]
         self.results_panel.first_follow_table.setColumnCount(3)
-        self.results_panel.first_follow_table.setHorizontalHeaderLabels(columns)
+        self.results_panel.first_follow_table.setHorizontalHeaderLabels(["No Terminal", "Primero", "Siguiente"])
         self.results_panel.first_follow_table.setRowCount(len(data))
         
         for idx, (nt, sets) in enumerate(data.items()):
@@ -522,9 +628,30 @@ class MainWindow(QMainWindow):
         for row in table.values():
             all_symbols.update(row.keys())
         
-        # Sort symbols: Terminals first, then Non-Terminals, then $
-        # Use existing lists to sort
-        sorted_cols = sorted(list(all_symbols)) # Simple sort for now
+        # Sort symbols: Terminals first (Action), then Non-Terminals (Goto)
+        # We classify based on primerosisiguientes lists
+        
+        terminals = []
+        non_terminals = []
+        
+        # Check against known terminals from current build
+        # Note: We can try to infer from keys or use the stored lists
+        # We use firstandfollows.t_list which should be up to date
+        
+        known_terminals = set(firstandfollows.t_list.keys())
+        known_terminals.add('$')
+        if hasattr(self.grammar_panel, 'chk_lambda') and self.grammar_panel.chk_lambda.isChecked():
+             known_terminals.add('λ')
+        if hasattr(self.grammar_panel, 'chk_epsilon') and self.grammar_panel.chk_epsilon.isChecked():
+             known_terminals.add('ε')
+
+        for sym in all_symbols:
+            if sym in known_terminals:
+                terminals.append(sym)
+            else:
+                non_terminals.append(sym)
+                
+        sorted_cols = sorted(terminals) + sorted(non_terminals)
         
         # Create headers
         self.results_panel.table_widget.setColumnCount(len(sorted_cols))
@@ -573,11 +700,11 @@ class MainWindow(QMainWindow):
             self.productions_list.addItem(f"{idx}: {p}")
 
     def export_csv(self):
-        # Check if we should do PDF export instead (LR(0) States)
-        if self.algo_selector.currentText() == "LR(0)" and self.results_panel.tabs.currentIndex() == 3: # States Tab
-             self.export_pdf_lr0()
+        # Check if we should do PDF export instead (LR-based States)
+        algo = self.algo_selector.currentText()
+        if algo in ["LR(0)", "SLR(1)", "CLR(1)", "LALR(1)"] and self.results_panel.tabs.currentIndex() == 3: # States Tab
+             self.export_pdf_states()
              return
-
         # Determine active tab
         current_index = self.results_panel.tabs.currentIndex()
         
@@ -593,6 +720,7 @@ class MainWindow(QMainWindow):
         elif current_index == 2:
             target_table = self.results_panel.parse_steps_table
             default_name = "parse_simulation.csv"
+
             
         if not target_table or target_table.rowCount() == 0:
             QMessageBox.warning(self, "Warning", "No data to export in the current tab.")
@@ -641,22 +769,30 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to export CSV: {str(e)}")
 
-    def refresh_lr0_states(self):
-        if self.algo_selector.currentText() == "LR(0)" and self.current_states:
+    def refresh_states(self):
+        algo = self.algo_selector.currentText()
+        if algo in ["LR(0)", "SLR(1)", "CLR(1)", "LALR(1)"] and self.current_states:
              show_lambda = self.results_panel.chk_show_lambda.isChecked()
-             
-             # Determine empty symbol based on input checkboxes
              empty_symbol = 'ε' if self.grammar_panel.chk_epsilon.isChecked() else 'λ'
              
-             formatted_states = generator_lr.format_states_lr0(self.current_states, show_lambda=show_lambda, empty_symbol=empty_symbol)
+             if algo == "CLR(1)":
+                 formatted_states = generator_clr.format_states(self.current_states, show_lambda=show_lambda, empty_symbol=empty_symbol)
+             elif algo == "LALR(1)":
+                 formatted_states = generator_lalr.format_states(self.current_states, show_lambda=show_lambda, empty_symbol=empty_symbol)
+             else:
+                 formatted_states = generator_lr.format_states_lr0(self.current_states, show_lambda=show_lambda, empty_symbol=empty_symbol)
+                 
              self.results_panel.states_text.setPlainText(formatted_states)
 
-    def export_pdf_lr0(self):
+    def export_pdf_states(self):
         if not self.current_states:
              QMessageBox.warning(self, "Warning", "No states to export.")
              return
              
-        file_path, _ = QFileDialog.getSaveFileName(self, "Save PDF", "states_lr0.pdf", "PDF Files (*.pdf)")
+        algo = self.algo_selector.currentText()
+        default_file = f"states_{algo.lower().replace('(','').replace(')','')}.pdf"
+        
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save PDF", default_file, "PDF Files (*.pdf)")
         if not file_path:
             return
             
@@ -664,12 +800,28 @@ class MainWindow(QMainWindow):
             show_lambda = self.results_panel.chk_show_lambda.isChecked()
             empty_symbol = 'ε' if self.grammar_panel.chk_epsilon.isChecked() else 'λ'
             
-            generator_lr.export_lr0_items_to_pdf(
-                self.current_states, 
-                filename=file_path, 
-                show_lambda=show_lambda,
-                empty_symbol=empty_symbol
-            )
+            if algo == "CLR(1)":
+                generator_clr.export_items_to_pdf(
+                    self.current_states, 
+                    codigos_equivalentes={}, 
+                    filename=file_path,
+                    show_lambda=show_lambda,
+                    empty_symbol=empty_symbol
+                )
+            elif algo == "LALR(1)":
+                 generator_lalr.export_items_to_pdf(
+                     self.current_states,
+                     filename=file_path,
+                     show_lambda=show_lambda,
+                     empty_symbol=empty_symbol
+                 )
+            else:
+                generator_lr.export_lr0_items_to_pdf(
+                    self.current_states, 
+                    filename=file_path, 
+                    show_lambda=show_lambda,
+                    empty_symbol=empty_symbol
+                )
             QMessageBox.information(self, "Success", f"States exported to {file_path}")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to export PDF: {str(e)}\n\n(Make sure 'reportlab' is installed)")

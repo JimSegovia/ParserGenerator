@@ -1,8 +1,10 @@
-from collections import deque
-from collections import OrderedDict
-from pprint import pprint
-import primerosysiguientes
-from primerosysiguientes import production_list, nt_list as ntl, t_list as tl
+from collections import deque, OrderedDict
+import firstandfollows
+
+
+# Added for Parse Tree Simulation
+nt_list_global = []
+
 
 nt_list = []
 t_list = []
@@ -61,7 +63,7 @@ def closure(items):
             
             # LR(0): We DO NOT compute lookaheads from beta + la
 
-            for prod in production_list:
+            for prod in firstandfollows.production_list:
                 lhs, rhs = prod.split('→')
                 if lhs.strip() != B:
                     continue
@@ -128,7 +130,9 @@ def format_states_lr0(states, codigos_equivalentes={}, show_lambda=False, empty_
     result = []
     for idx, state in enumerate(states):
         result.append(f"Item{idx}{{")
-        for item in state: # Access list directly
+        # Ensure we can handle State objects or raw lists
+        items = state.closure if hasattr(state, 'closure') else state
+        for item in items:
              
              head, body = item.split('→')
              
@@ -200,9 +204,9 @@ def calc_states():
 
         return False
 
-    global production_list, nt_list, t_list
+    global nt_list, t_list
 
-    head, body = production_list[0].split('→')
+    head, body = firstandfollows.production_list[0].split('→')
 
     states = [closure([Item(head + '→.' + body, [])])]
 
@@ -242,7 +246,7 @@ def make_table(states):
         head, body = item.split('→')
         body_without_dot = body.replace('.', '').strip()
         clean = head.strip() + '→' + body_without_dot
-        for i, prod in enumerate(production_list):
+        for i, prod in enumerate(firstandfollows.production_list):
             if prod.strip() == clean:
                 return i
         return -1
@@ -261,7 +265,8 @@ def make_table(states):
 
 
             if body_symbols == ['.']:  # Producción completamente reducida
-                for term in item.lookahead:
+                # LR(0): Reduce on ALL terminals (including $)
+                for term in t_list:
                     if term not in SLR_Table[s.no].keys():
                         SLR_Table[s.no][term] = {'r' + str(getprodno(item))}
                     else:
@@ -278,7 +283,8 @@ def make_table(states):
                 if getprodno(item) == 0:
                     SLR_Table[s.no]['$'] = 'Aceptar'
                 else:
-                    for term in item.lookahead:
+                    # LR(0): Reduce on ALL terminals
+                    for term in t_list:
                         if term not in SLR_Table[s.no].keys():
                             SLR_Table[s.no][term] = {'r' + str(getprodno(item))}
                         else:
@@ -291,21 +297,147 @@ def make_table(states):
             if t != []:
                 if nextsym in t_list:
                     if nextsym not in SLR_Table[s.no].keys():
-                        SLR_Table[s.no][nextsym] = {'d' + str(getstateno(t))}
+                        SLR_Table[s.no][nextsym] = {'s' + str(getstateno(t))}
                     else:
-                        SLR_Table[s.no][nextsym] |= {'d' + str(getstateno(t))}
+                        SLR_Table[s.no][nextsym] |= {'s' + str(getstateno(t))}
                 else:
                     SLR_Table[s.no][nextsym] = str(getstateno(t))
 
     return SLR_Table
 
+def make_table_slr(states):
+    global nt_list, t_list
+    
+    # 1. State Object Conversion
+    for i in range(len(states)):
+        if not isinstance(states[i], State):
+            states[i] = State(states[i])
+
+    def getstateno(t):
+        for s in states:
+            if len(s.closure) != len(t):
+                continue
+            s_set = set(str(x) for x in s.closure)
+            t_set = set(str(x) for x in t)
+            if s_set == t_set:
+                 return s.no
+        return -1
+
+    def getprodno(item):
+        """
+        Robustly finds production index by comparing token lists,
+        ignoring whitespace differences.
+        """
+        item_head, item_body = item.split('→')
+        # Remove dot and excess whitespace
+        item_body_clean = item_body.replace('.', ' ').strip()
+        item_tokens = item_body_clean.split()
+        
+        # Handle Lambda/Epsilon in item body if it was purely that
+        # (Though usually formatted items keep their structure)
+        
+        item_head = item_head.strip()
+        
+        for i, prod in enumerate(firstandfollows.production_list):
+            prod_head, prod_body = prod.split('→')
+            prod_tokens = prod_body.strip().split()
+            
+            if item_head == prod_head.strip() and item_tokens == prod_tokens:
+                return i
+        return -1
+
+    Table = OrderedDict()
+
+    # Initialize Table Rows
+    for s in states:
+        Table[s.no] = OrderedDict()
+
+    for s in states:
+        for item in s.closure:
+            head, body = item.split('→')
+            body_symbols = split_body_with_dot(body.strip())
+
+            # CASE 1: Reduce checks
+            # Logic: If dot is last, or body became only '.' (from A->. or A->.λ)
+            
+            # Check effectively if it is a reduce item
+            # We can check if 'dot' is at the end of the filtered symbols
+            is_reduce = False
+            if body_symbols == ['.']: 
+                is_reduce = True
+            elif '.' in body_symbols and body_symbols.index('.') == len(body_symbols) - 1:
+                is_reduce = True
+                
+            if is_reduce:
+                prod_idx = getprodno(item)
+                
+                if prod_idx == -1:
+                    print(f"Warning: Could not find production for item {item}")
+                    continue
+
+                if prod_idx == 0:
+                    # Accept State: S' -> S .
+                    Table[s.no]['$'] = 'Aceptar'
+                else:
+                    # SLR(1) Logic: Reduce only on Follow(Head)
+                    follow_set = firstandfollows.get_siguiente(head.strip())
+                    
+                    if not follow_set:
+                        # Should not happen for reachable non-terminals, but safety check
+                        continue
+
+                    for term in follow_set:
+                        if term not in Table[s.no].keys():
+                            Table[s.no][term] = {'r' + str(prod_idx)}
+                        else:
+                            val = Table[s.no][term]
+                            if isinstance(val, set):
+                                val.add('r' + str(prod_idx))
+                            else:
+                                Table[s.no][term] = {val, 'r' + str(prod_idx)}
+                continue
+
+            # CASE 2: Shift or Goto
+            try:
+                if '.' in body_symbols:
+                    dot_pos = body_symbols.index('.')
+                    if dot_pos + 1 < len(body_symbols):
+                        nextsym = body_symbols[dot_pos + 1]
+                        
+                        t = goto(s.closure, nextsym)
+                        if t != []:
+                            next_state_id = getstateno(t)
+                            
+                            if nextsym in t_list:
+                                # SHIFT
+                                action = 's' + str(next_state_id)
+                                if nextsym not in Table[s.no].keys():
+                                    Table[s.no][nextsym] = {action}
+                                else:
+                                     val = Table[s.no][nextsym]
+                                     if isinstance(val, set):
+                                         val.add(action)
+                                     else:
+                                         Table[s.no][nextsym] = {val, action}
+                            else:
+                                # GOTO
+                                Table[s.no][nextsym] = str(next_state_id)
+                        
+            except ValueError:
+                 pass
+            except IndexError:
+                 pass
+                 
+    return Table
+
+
 def augment_grammar():
     for i in range(ord('Z'), ord('A') - 1, -1):
         new_start = chr(i)
-        if new_start not in ntl:
-            start_prod = production_list[0]
-            production_list.insert(0, new_start + '→' + start_prod.split('→')[0])
-            ntl[new_start] = primerosysiguientes.NonTerminal(new_start)  # <- Añadido
+        if new_start not in firstandfollows.nt_list:
+            start_prod = firstandfollows.production_list[0]
+            firstandfollows.production_list.insert(0, new_start + '→' + start_prod.split('→')[0])
+            firstandfollows.nt_list[new_start] = firstandfollows.NonTerminal(new_start)
             return
 
 import sys
@@ -316,17 +448,17 @@ def main():
     non_terminal_input = input().strip()
     non_terminal_symbols = non_terminal_input.split('|')
 
-    primerosysiguientes.nt_list.clear()
+    firstandfollows.nt_list.clear()
     for nt in non_terminal_symbols:
-        primerosysiguientes.nt_list[nt] = primerosysiguientes.NonTerminal(nt)
+        firstandfollows.nt_list[nt] = firstandfollows.NonTerminal(nt)
 
     print("\nIngresa los símbolos TERMINALES separados por |:")
     terminal_input = input().strip()
     terminal_symbols = terminal_input.split('|')
 
-    primerosysiguientes.t_list.clear()
+    firstandfollows.t_list.clear()
     for term in terminal_symbols:
-        primerosysiguientes.t_list[term] = primerosysiguientes.Terminal(term)
+        firstandfollows.t_list[term] = firstandfollows.Terminal(term)
 
     print("\nPega tus producciones (una por línea).")
     print("Cuando termines, presiona Enter en una línea vacía:")
@@ -352,17 +484,19 @@ def main():
     # Aqui acaba
     production_list[:] = user_productions
 
-    primerosysiguientes.main(production_list)
+    firstandfollows.main(production_list)
 
-    print("\tFIRST AND FOLLOW OF NON-TERMINALS")
+    print("\tPRIMERO Y SIGUIENTE DE NO TERMINALES")
+    
+    firstandfollows.compute_all_primeros()
+    firstandfollows.compute_all_siguientes()
+    
     for nt in ntl:
-        primerosysiguientes.compute_first(nt)
-        primerosysiguientes.compute_follow(nt)
-        first = sorted(primerosysiguientes.get_first(nt))
-        follow = sorted(primerosysiguientes.get_follow(nt))
+        first = sorted(firstandfollows.get_primero(nt))
+        follow = sorted(firstandfollows.get_siguiente(nt))
         print(nt)
-        print("\tFirst:\t", primerosysiguientes.get_first(nt))
-        print("\tFollow:\t", primerosysiguientes.get_follow(nt), "\n")
+        print("\tPrimero:\t", firstandfollows.get_primero(nt))
+        print("\tSiguiente:\t", firstandfollows.get_siguiente(nt), "\n")
 
     augment_grammar()
 
@@ -401,7 +535,7 @@ def main():
 
                 tipos = {'shift': 0, 'reduce': 0}
                 for accion in acciones_list:
-                    if accion.startswith('d'):
+                    if accion.startswith('s'):
                         tipos['shift'] += 1
                     elif accion.startswith('r'):
                         tipos['reduce'] += 1
@@ -498,41 +632,23 @@ def export_lr0_items_to_pdf(states, filename="states_lr0.pdf", show_lambda=False
         c.drawString(margin, y, titulo)
         y -= 16
 
-        for item in state:
+        for item in (state.closure if hasattr(state, 'closure') else state):
              head, body = item.split('→')
              
              # Sanitize
              for bad_sym in ['λ', 'ε']:
                  body = body.replace(bad_sym, "")
              
-             # Handle dot (use '.' for PDF compatibility if font issues, or unicode if supported)
-             # User said "correctamente", often means unicode fails. Safest checks:
-             # Try simple chars first, or use Helvetica
-             
-             # Using simple chars for maximum PDF compatibility unless we load a font
-             # But user wants "premium". Let's try sticking to text but clean.
-             # Arrow -> "->"
-             # Dot -> "." or "*" or "(*)" 
-             # Let's try to align with GUI but use PDF safe chars if no font.
-             # Standard fonts (Times-Roman) supports basic ASCII. 
-             # Let's use "->" and "." to be SAFE.
-             
-             body_display = body.replace('.', '.') # Just keeping dot as dot? or maybe '*'
-             # Actually, the user code `item.replace(".", "●")` implies they WANT the blob.
-             # But standard PDF font won't show it.
-             # I will use a simple dot '.' or a specific char code if known.
-             # Better: Use " . " (spaces) to make it visible.
-             
-             body_display = body_display.strip()
+             body_display = body.replace('.', '●').strip()
              body_display = " ".join(body_display.split())
              
-             if body_display.replace('.', '').strip() == "":
+             if body_display.replace('●', '').strip() == "":
                  if show_lambda:
-                     if body_display.startswith('.'):
-                          body_display = f". {empty_symbol}" 
+                     if body_display.startswith('●'):
+                          body_display = f"● {empty_symbol}" 
                      else:
-                          body_display = f"{empty_symbol} ."
-
+                          body_display = f"{empty_symbol} ●"
+             
              line = f"[ {head} -> {body_display} ]"
 
              wrapped_lines = textwrap.wrap(line, width=90)
@@ -554,6 +670,145 @@ def export_lr0_items_to_pdf(states, filename="states_lr0.pdf", show_lambda=False
 
     c.save()
     print(f"✅ PDF generado: {filename}")
+
+
+def parse(table, input_string):
+    """
+    Simulates LR(0) parsing for the given input string.
+    Returns a list of steps, where each step is a dict:
+    {
+        'stack': str,   # State Stack
+        'symbols': str, # Symbol Stack
+        'input': str,   # Input Buffer
+        'action': str   # Action Taken
+    }
+    """
+    global production_list
+    
+    # 1. Tokenize Input
+    tokens = input_string.strip().split()
+    tokens.append('$') # Append EOF
+    
+    # 2. Initialize Stacks
+    state_stack = [0]
+    symbol_stack = [] # Removed '$' as requested by user
+    
+    steps = []
+    
+    cursor = 0
+    max_steps = 1000 # Safety break
+    step_count = 0
+    
+    accepted = False
+    
+    while step_count < max_steps:
+        current_state = state_stack[-1]
+        current_input = tokens[cursor]
+        
+        # Snapshot state
+        steps.append({
+            'stack': " ".join(map(str, state_stack)),
+            'symbols': " ".join(symbol_stack),
+            'input': " ".join(tokens[cursor:]),
+            'action': ""
+        })
+        
+        step_idx = len(steps) - 1
+        
+        # Look up action
+        # Table format: table[state_id][symbol] = {'sN'} or {'rN'} or 'Aceptar'
+        
+        row = table.get(current_state, {})
+        action_set = row.get(current_input)
+        
+        if not action_set:
+            steps[step_idx]['action'] = f"Error: No action for input '{current_input}' in state {current_state}"
+            return steps # Fail
+            
+        # Resolve Set
+        # If conflict, we just take the first one for simulation purposes or error
+        if isinstance(action_set, set):
+            action = list(action_set)[0]
+            if len(action_set) > 1:
+                steps[step_idx]['action'] = f"Conflict: {action_set}. Chose {action}"
+        else:
+            action = action_set # Could be 'Aceptar' string directly based on logic
+            
+        # Execute Action
+        if action == 'Aceptar':
+            steps[step_idx]['action'] = "Accept"
+            accepted = True
+            break
+            
+        elif action.startswith('s'):
+            # SHIFT
+            next_state = int(action[1:])
+            
+            steps[step_idx]['action'] = f"Shift {next_state}"
+            
+            state_stack.append(next_state)
+            symbol_stack.append(current_input)
+            cursor += 1
+            
+        elif action.startswith('r'):
+            # REDUCE
+            prod_idx = int(action[1:])
+            production = production_list[prod_idx]
+            lhs, rhs = production.split('→')
+            lhs = lhs.strip()
+            rhs_body = rhs.strip()
+            
+            # Determine RHS length (beta)
+            # Handle Lambda/Epsilon
+            rhs_symbols = []
+            if rhs_body not in ['λ', 'ε', '']:
+                 rhs_symbols = rhs_body.split()
+            
+            count_to_pop = len(rhs_symbols)
+            
+            # Pop from stacks
+            if count_to_pop > 0:
+                state_stack = state_stack[:-count_to_pop]
+                symbol_stack = symbol_stack[:-count_to_pop]
+            
+            # Note: Do not advance cursor
+            
+            # GOTO
+            top_state = state_stack[-1]
+            goto_row = table.get(top_state, {})
+            goto_state_raw = goto_row.get(lhs)
+            
+            if not goto_state_raw:
+                steps[step_idx]['action'] = f"Reduce {prod_idx} ({production}), but GOTO error on [{top_state}, {lhs}]"
+                return steps
+                
+            # Goto could be a set or string/int depending on how make_table saves NTs
+            # In make_table: SLR_Table[s.no][nextsym] = str(getstateno(t)) (string)
+            if isinstance(goto_state_raw, set):
+                 goto_state = int(list(goto_state_raw)[0])
+            else:
+                 goto_state = int(goto_state_raw)
+                 
+            state_stack.append(goto_state)
+            symbol_stack.append(lhs)
+            
+            steps[step_idx]['action'] = f"Reduce {prod_idx}: {production}"
+            
+        else:
+            steps[step_idx]['action'] = f"Unknown action: {action}"
+            return steps
+            
+        step_count += 1
+        
+    if not accepted and step_count >= max_steps:
+         steps.append({
+            'stack': "...",
+            'symbols': "...",
+            'input': "...",
+            'action': "Terminated: Max steps reached"
+        })
+        
+    return steps
 
 
 if __name__ == "__main__":

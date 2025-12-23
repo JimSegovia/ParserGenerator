@@ -1,7 +1,7 @@
 from collections import defaultdict
-import primerosysiguientes
+import firstandfollows
 
-LAMBDA = primerosysiguientes.LAMBDA 
+LAMBDA = firstandfollows.LAMBDA
 
 def compute_ll1_table():
     """
@@ -11,13 +11,13 @@ def compute_ll1_table():
     """
     tabla = defaultdict(dict)
 
-    for i, prod in enumerate(primerosysiguientes.production_list):
+    for i, prod in enumerate(firstandfollows.production_list):
         head, body = prod.split("→")
         head = head.strip()
         body_syms = body.strip().split()
 
         # Calculate First(body)
-        first = primerosysiguientes.compute_first_sequence(body_syms)
+        first = firstandfollows.compute_first_sequence(body_syms)
 
         # Rule 1: For each terminal 'a' in First(beta), add A->beta to M[A, a]
         for t in first - {LAMBDA}:
@@ -26,7 +26,7 @@ def compute_ll1_table():
         # Rule 2: If epsilon in First(beta), add A->beta to M[A, b] for each b in Follow(A)
         # Also, if epsilon in First(beta) and $ in Follow(A), add A->beta to M[A, $]
         if LAMBDA in first:
-            follow = primerosysiguientes.get_follow(head)
+            follow = firstandfollows.get_siguiente(head)
             for f in follow:
                 tabla[head][f] = i
 
@@ -56,7 +56,7 @@ def parse_input(table, start_symbol, input_tokens):
     tokens = input_tokens + ['$']
     stack = ['$', start_symbol]
     
-    if start_symbol not in primerosysiguientes.nt_list:
+    if start_symbol not in firstandfollows.nt_list:
         return f"Error: Start symbol '{start_symbol}' not found.", []
 
     root = TreeNode(start_symbol)
@@ -92,14 +92,14 @@ def parse_input(table, start_symbol, input_tokens):
             stack.pop()
             stack_nodes.pop()
             cursor += 1
-        elif top in primerosysiguientes.t_list or top == '$':
+        elif top in firstandfollows.t_list or top == '$':
              return f"Error: Expected '{top}', found '{current_token}'", steps
-        elif top in primerosysiguientes.nt_list:
+        elif top in firstandfollows.nt_list:
             if current_token not in table.get(top, {}):
                 return f"Error: No rule for [{top}, {current_token}]", steps
             
             prod_idx = table[top][current_token]
-            prod = primerosysiguientes.production_list[prod_idx]
+            prod = firstandfollows.production_list[prod_idx]
             
             step_entry["action"] = f"{prod}" # Simplified action: just the production
             
